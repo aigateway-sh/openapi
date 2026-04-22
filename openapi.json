@@ -1,0 +1,541 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AIgateway",
+    "version": "1",
+    "summary": "One OpenAI-compatible API to every frontier and open-weight AI model.",
+    "description": "OpenAI-compatible endpoints for chat, embeddings, images, audio, video, translation, classification, OCR, rerank, and moderation. Change `base_url` on the OpenAI SDK to `https://api.aigateway.sh/v1` and every existing integration works. For the canonical, fully-typed spec see https://api.aigateway.sh/openapi.json.",
+    "contact": {
+      "email": "support@aigateway.sh",
+      "url": "https://aigateway.sh/support"
+    },
+    "termsOfService": "https://aigateway.sh/terms",
+    "license": {
+      "name": "Proprietary — commercial use permitted under the Terms of Service",
+      "url": "https://aigateway.sh/terms"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.aigateway.sh/v1",
+      "description": "Production gateway (edge, 130+ POPs)"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "externalDocs": {
+    "description": "Full reference + SDK docs",
+    "url": "https://aigateway.sh/reference"
+  },
+  "tags": [
+    {
+      "name": "chat",
+      "description": "OpenAI-compatible chat completions (text, vision, tool use, streaming)"
+    },
+    {
+      "name": "embeddings",
+      "description": "Text embeddings"
+    },
+    {
+      "name": "images",
+      "description": "Image generation"
+    },
+    {
+      "name": "audio",
+      "description": "STT + TTS"
+    },
+    {
+      "name": "video",
+      "description": "Async video generation"
+    },
+    {
+      "name": "moderation",
+      "description": "Content safety"
+    },
+    {
+      "name": "models",
+      "description": "Model discovery"
+    }
+  ],
+  "paths": {
+    "/chat/completions": {
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Create chat completion",
+        "description": "Drop-in replacement for OpenAI's /v1/chat/completions. Supports streaming via SSE, tool calling, vision, and JSON mode.",
+        "operationId": "createChatCompletion",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatCompletionRequest"
+              },
+              "examples": {
+                "simple": {
+                  "value": {
+                    "model": "anthropic/claude-opus-4.7",
+                    "messages": [
+                      {
+                        "role": "user",
+                        "content": "hi"
+                      }
+                    ]
+                  }
+                },
+                "streaming": {
+                  "value": {
+                    "model": "openai/gpt-5.4",
+                    "messages": [
+                      {
+                        "role": "user",
+                        "content": "Stream this."
+                      }
+                    ],
+                    "stream": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chat completion (SSE if stream=true)"
+          }
+        }
+      }
+    },
+    "/embeddings": {
+      "post": {
+        "tags": [
+          "embeddings"
+        ],
+        "summary": "Create embeddings",
+        "operationId": "createEmbeddings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "input"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "example": "baai/bge-m3"
+                  },
+                  "input": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Embedding vectors"
+          }
+        }
+      }
+    },
+    "/images/generations": {
+      "post": {
+        "tags": [
+          "images"
+        ],
+        "summary": "Generate image",
+        "operationId": "createImage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "prompt"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "example": "black-forest-labs/flux-2-klein-9b"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "string",
+                    "example": "1024x1024"
+                  },
+                  "n": {
+                    "type": "integer",
+                    "default": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Image URL(s)"
+          }
+        }
+      }
+    },
+    "/audio/transcriptions": {
+      "post": {
+        "tags": [
+          "audio"
+        ],
+        "summary": "Transcribe audio (STT)",
+        "operationId": "createTranscription",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "file"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "example": "deepgram/nova-3"
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "language": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transcription result"
+          }
+        }
+      }
+    },
+    "/audio/speech": {
+      "post": {
+        "tags": [
+          "audio"
+        ],
+        "summary": "Synthesize speech (TTS)",
+        "operationId": "createSpeech",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "input"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "example": "deepgram/aura-2-en"
+                  },
+                  "input": {
+                    "type": "string"
+                  },
+                  "voice": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Audio stream (mp3/wav)"
+          }
+        }
+      }
+    },
+    "/videos/generations": {
+      "post": {
+        "tags": [
+          "video"
+        ],
+        "summary": "Generate video (async)",
+        "operationId": "createVideo",
+        "description": "Returns 202 with a job id. Poll GET /jobs/{id} or pass webhook_url.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "prompt"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "example": "google/veo-3.1"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "type": "number"
+                  },
+                  "webhook_url": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted"
+          }
+        }
+      }
+    },
+    "/moderations": {
+      "post": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "Moderate content",
+        "operationId": "createModeration",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "input"
+                ],
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "example": "meta/llama-guard-3-8b"
+                  },
+                  "input": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-category safety flags"
+          }
+        }
+      }
+    },
+    "/models": {
+      "get": {
+        "tags": [
+          "models"
+        ],
+        "summary": "List models",
+        "operationId": "listModels",
+        "parameters": [
+          {
+            "name": "modality",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "text",
+                "image",
+                "audio-stt",
+                "audio-tts",
+                "video",
+                "embedding",
+                "rerank",
+                "moderation"
+              ]
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "anthropic"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAI-shaped model list with pricing + capabilities"
+          }
+        }
+      }
+    },
+    "/jobs/{id}": {
+      "get": {
+        "tags": [
+          "video"
+        ],
+        "summary": "Get async job",
+        "operationId": "getJob",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status + result"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "sk-aig-..."
+      }
+    },
+    "schemas": {
+      "ChatCompletionRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Provider-qualified slug. Featured: anthropic/claude-opus-4.7, openai/gpt-5.4, google/gemini-3.1-pro, moonshot/kimi-k2.6, anthropic/claude-sonnet-4.6, openai/gpt-5.4-mini, xai/grok-4, google/gemini-3-flash, anthropic/claude-haiku-4.5, openai/o4-mini. Fetch full list from /models.",
+            "example": "anthropic/claude-opus-4.7"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "role",
+                "content"
+              ],
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "user",
+                    "assistant",
+                    "tool"
+                  ]
+                },
+                "content": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "stream": {
+            "type": "boolean",
+            "default": false
+          },
+          "temperature": {
+            "type": "number"
+          },
+          "max_tokens": {
+            "type": "integer"
+          },
+          "tools": {
+            "type": "array"
+          },
+          "tool_choice": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object"
+              }
+            ]
+          },
+          "response_format": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
+  "x-featured-models": [
+    "anthropic/claude-opus-4.7",
+    "openai/gpt-5.4",
+    "google/gemini-3.1-pro",
+    "moonshot/kimi-k2.6",
+    "anthropic/claude-sonnet-4.6",
+    "openai/gpt-5.4-mini",
+    "xai/grok-4",
+    "google/gemini-3-flash",
+    "anthropic/claude-haiku-4.5",
+    "openai/o4-mini"
+  ],
+  "x-llms-txt": "https://aigateway.sh/llms.txt",
+  "x-llms-full-txt": "https://aigateway.sh/llms-full.txt",
+  "x-mcp-endpoint": "https://api.aigateway.sh/mcp"
+}
