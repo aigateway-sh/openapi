@@ -1,24 +1,24 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "AIgateway",
-    "version": "1",
-    "summary": "One OpenAI-compatible API to every frontier and open-weight AI model.",
-    "description": "OpenAI-compatible endpoints for chat, embeddings, images, audio, video, translation, classification, OCR, rerank, and moderation. Change `base_url` on the OpenAI SDK to `https://api.aigateway.sh/v1` and every existing integration works. For the canonical, fully-typed spec see https://api.aigateway.sh/openapi.json.",
+    "title": "AIgateway API",
+    "version": "1.0.0",
+    "summary": "AIgateway — one OpenAI-compatible endpoint, every model, every modality.",
+    "description": "Drop-in for the OpenAI SDK: set base_url to https://api.aigateway.sh/v1. Beyond the core endpoints, AIgateway exposes aggregator-native primitives — sub-accounts, eval-driven routing, replay + shadow A/B, cost-attribution tags, and hard budget caps.\n\n## Auto Router\n\nSet `model` to `\"auto\"` (or scope it to a modality with `\"auto/text\"`, `\"auto/image\"`, `\"auto/video\"`, `\"auto/tts\"`, `\"auto/stt\"`, `\"auto/music\"`, `\"auto/embedding\"`), or omit `model` entirely, and the gateway reads each request, picks the cheapest model in a curated, eval-covered pool that still clears the quality floor, and bills you less than the premium model you would otherwise have called. Every request carries a baseline (set it explicitly with `baseline_model`, or it defaults to the premium model for that modality); the baseline doubles as a hard cost ceiling, so the router only ever routes DOWN and you never pay more than the baseline. Bias the pick with `x-routing` (`cost` | `speed` | `quality` | `auto`). Routed responses return transparency headers (`X-Routing-Selected`, `X-Routing-Reason`, `X-Routing-Complexity`, `X-Routing-Quality`, `X-Auto-Baseline-Model`, `X-Auto-Baseline-Cost-Cents`, `X-Auto-Route-Fee-Cents`, `X-Auto-Savings-Cents`) showing what ran, why, and the exact savings. Everything else stays OpenAI-compatible — only the `model` value changes.",
     "contact": {
+      "name": "AIgateway support",
       "email": "support@aigateway.sh",
       "url": "https://aigateway.sh/support"
-    },
-    "termsOfService": "https://aigateway.sh/terms",
-    "license": {
-      "name": "Proprietary — commercial use permitted under the Terms of Service",
-      "url": "https://aigateway.sh/terms"
     }
   },
   "servers": [
     {
-      "url": "https://api.aigateway.sh/v1",
-      "description": "Production gateway (edge, 130+ POPs)"
+      "url": "https://api.aigateway.sh",
+      "description": "JSON API"
+    },
+    {
+      "url": "https://media.aigateway.sh",
+      "description": "Media / file downloads (for /v1/files/** paths)"
     }
   ],
   "security": [
@@ -26,403 +26,808 @@
       "bearerAuth": []
     }
   ],
-  "externalDocs": {
-    "description": "Full reference + SDK docs",
-    "url": "https://aigateway.sh/reference"
-  },
-  "tags": [
-    {
-      "name": "chat",
-      "description": "OpenAI-compatible chat completions (text, vision, tool use, streaming)"
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "sk-aig-..."
+      }
     },
-    {
-      "name": "embeddings",
-      "description": "Text embeddings"
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "code": {
+                "type": "integer"
+              },
+              "param": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "message",
+              "type",
+              "code"
+            ]
+          }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ]
+      },
+      "ChatCompletionRequest": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "An explicit provider/model slug (e.g. anthropic/claude-opus-4.8), or an Auto Router value: \"auto\" picks the cheapest model in the curated text pool that clears the quality floor and stays at or under your baseline; \"auto/<modality>\" scopes routing to a modality (text | image | video | tts | stt | music | embedding). Omitting the field entirely is treated as \"auto\". On routed calls you pay strictly less than the premium baseline, never more.",
+            "examples": [
+              "anthropic/claude-opus-4.8",
+              "auto",
+              "auto/text"
+            ]
+          },
+          "baseline_model": {
+            "type": "string",
+            "description": "Auto Router only. The model you would otherwise have called. Sets the savings measuring-stick and the hard cost ceiling: auto candidates are filtered to those no more expensive than this, so the router only routes DOWN and you never pay above the baseline. Defaults to the premium model for the resolved modality when omitted. Also accepted as the x-baseline-model header.",
+            "example": "anthropic/claude-opus-4.8"
+          },
+          "x-routing": {
+            "type": "string",
+            "enum": [
+              "cost",
+              "speed",
+              "quality",
+              "auto"
+            ],
+            "description": "Auto Router only. Biases model selection: \"cost\" favors the cheapest model that clears the floor; \"quality\" favors the strongest model still at or under your baseline; \"speed\" favors faster models; \"auto\" balances cost and quality from the complexity read. Defaults to \"auto\"."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            }
+          },
+          "stream": {
+            "type": "boolean",
+            "default": false
+          },
+          "max_tokens": {
+            "type": "integer"
+          },
+          "temperature": {
+            "type": "number"
+          },
+          "top_p": {
+            "type": "number"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "messages"
+        ]
+      },
+      "SubAccount": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "external_ref": {
+            "type": "string",
+            "nullable": true
+          },
+          "spend_cap_cents": {
+            "type": "integer"
+          },
+          "rate_limit_rpm": {
+            "type": "integer"
+          },
+          "default_tag": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "integer"
+          }
+        }
+      },
+      "EvalRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "candidate_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dataset_size": {
+            "type": "integer"
+          },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "quality",
+              "cost",
+              "speed"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "winner_model": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary": {
+            "type": "object"
+          }
+        }
+      },
+      "Usage": {
+        "type": "object",
+        "properties": {
+          "prompt_tokens": {
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "type": "integer"
+          },
+          "total_tokens": {
+            "type": "integer"
+          },
+          "prompt_tokens_details": {
+            "type": "object",
+            "properties": {
+              "cached_tokens": {
+                "type": "integer"
+              }
+            }
+          },
+          "cost": {
+            "type": "number",
+            "description": "Total cost of this request in USD."
+          }
+        }
+      },
+      "Replay": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source_request_id": {
+            "type": "string"
+          },
+          "source_model": {
+            "type": "string"
+          },
+          "target_model": {
+            "type": "string"
+          },
+          "shadow": {
+            "type": "boolean"
+          },
+          "cost_source_cents": {
+            "type": "number"
+          },
+          "cost_target_cents": {
+            "type": "number"
+          },
+          "latency_source_ms": {
+            "type": "integer"
+          },
+          "latency_target_ms": {
+            "type": "integer"
+          },
+          "score_delta": {
+            "type": "number",
+            "nullable": true
+          },
+          "source_output": {
+            "type": "string",
+            "nullable": true
+          },
+          "target_output": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      }
     },
-    {
-      "name": "images",
-      "description": "Image generation"
+    "parameters": {
+      "XAigTag": {
+        "name": "x-aig-tag",
+        "in": "header",
+        "required": false,
+        "description": "Cost-attribution tag for the request. Surfaces in /v1/usage/by-tag.",
+        "schema": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "XBaselineModel": {
+        "name": "x-baseline-model",
+        "in": "header",
+        "required": false,
+        "description": "Auto Router only. Header form of baseline_model: the model you would otherwise have called, used as the savings measuring-stick and the hard cost ceiling. The router only routes DOWN from it, so you never pay above the baseline. Defaults to the premium model for the resolved modality.",
+        "schema": {
+          "type": "string",
+          "example": "anthropic/claude-opus-4.8"
+        }
+      }
     },
-    {
-      "name": "audio",
-      "description": "STT + TTS"
-    },
-    {
-      "name": "video",
-      "description": "Async video generation"
-    },
-    {
-      "name": "moderation",
-      "description": "Content safety"
-    },
-    {
-      "name": "models",
-      "description": "Model discovery"
+    "headers": {
+      "XAutoRouted": {
+        "description": "Auto Router only. Present and \"true\" when the request was routed by model:\"auto\".",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "true"
+          ]
+        }
+      },
+      "XRoutingSelected": {
+        "description": "Auto Router only. The provider/model slug the router actually ran.",
+        "schema": {
+          "type": "string",
+          "example": "anthropic/claude-haiku-4.5"
+        }
+      },
+      "XRoutingReason": {
+        "description": "Auto Router only. Short human-readable reason the model was picked.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "XRoutingComplexity": {
+        "description": "Auto Router only. The complexity read of the request that drove the pick.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "simple",
+            "moderate",
+            "complex"
+          ],
+          "example": "simple"
+        }
+      },
+      "XRoutingQuality": {
+        "description": "Auto Router only. The curated quality prior of the selected model, in [0,1].",
+        "schema": {
+          "type": "string",
+          "example": "0.780"
+        }
+      },
+      "XAutoBaselineModel": {
+        "description": "Auto Router only. The baseline (premium) model used as the cost ceiling and savings measuring-stick.",
+        "schema": {
+          "type": "string",
+          "example": "anthropic/claude-opus-4.8"
+        }
+      },
+      "XAutoBaselineCostCents": {
+        "description": "Auto Router only. What this request would have cost on the baseline model, in cents.",
+        "schema": {
+          "type": "string",
+          "example": "0.997"
+        }
+      },
+      "XAutoRouteFeeCents": {
+        "description": "Auto Router only. The Auto Router fee applied to this routed call, in cents.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "XAutoSavingsCents": {
+        "description": "Auto Router only. Dollars saved on this call versus the baseline model, in cents.",
+        "schema": {
+          "type": "string",
+          "example": "5.58"
+        }
+      },
+      "XCostCents": {
+        "description": "Cost of this request to the customer, in fractional cents (up to 6 decimal places).",
+        "schema": {
+          "type": "string",
+          "example": "0.4389"
+        }
+      },
+      "XCachedInputUnits": {
+        "description": "Number of input tokens served from the provider prompt cache. Present only when caching reduced the cost.",
+        "schema": {
+          "type": "string",
+          "example": "4500"
+        }
+      }
     }
-  ],
+  },
   "paths": {
-    "/chat/completions": {
+    "/v1/chat/completions": {
       "post": {
+        "summary": "Create a chat completion",
+        "description": "OpenAI-compatible chat completion. Set model to \"auto\" or \"auto/text\" (or omit it) to use the Auto Router: the gateway reads the request, routes down to the cheapest curated model that clears the quality floor, and bills you less than your baseline. See baseline_model and x-routing in the request body, and the X-Routing-*/X-Auto-* response headers. On streaming responses the routing-decision headers arrive up front.",
         "tags": [
-          "chat"
+          "core"
         ],
-        "summary": "Create chat completion",
-        "description": "Drop-in replacement for OpenAI's /v1/chat/completions. Supports streaming via SSE, tool calling, vision, and JSON mode.",
-        "operationId": "createChatCompletion",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XAigTag"
+          },
+          {
+            "$ref": "#/components/parameters/XBaselineModel"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ChatCompletionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chat completion (OpenAI shape). On Auto Router calls, transparency headers disclose the pick and savings.",
+            "headers": {
+              "X-Auto-Routed": {
+                "$ref": "#/components/headers/XAutoRouted"
               },
-              "examples": {
-                "simple": {
-                  "value": {
-                    "model": "anthropic/claude-opus-4.7",
-                    "messages": [
-                      {
-                        "role": "user",
-                        "content": "hi"
-                      }
-                    ]
-                  }
-                },
-                "streaming": {
-                  "value": {
-                    "model": "openai/gpt-5.4",
-                    "messages": [
-                      {
-                        "role": "user",
-                        "content": "Stream this."
-                      }
-                    ],
-                    "stream": true
-                  }
+              "X-Routing-Selected": {
+                "$ref": "#/components/headers/XRoutingSelected"
+              },
+              "X-Routing-Reason": {
+                "$ref": "#/components/headers/XRoutingReason"
+              },
+              "X-Routing-Complexity": {
+                "$ref": "#/components/headers/XRoutingComplexity"
+              },
+              "X-Routing-Quality": {
+                "$ref": "#/components/headers/XRoutingQuality"
+              },
+              "X-Auto-Baseline-Model": {
+                "$ref": "#/components/headers/XAutoBaselineModel"
+              },
+              "X-Auto-Baseline-Cost-Cents": {
+                "$ref": "#/components/headers/XAutoBaselineCostCents"
+              },
+              "X-Auto-Route-Fee-Cents": {
+                "$ref": "#/components/headers/XAutoRouteFeeCents"
+              },
+              "X-Auto-Savings-Cents": {
+                "$ref": "#/components/headers/XAutoSavingsCents"
+              },
+              "X-Cost-Cents": {
+                "$ref": "#/components/headers/XCostCents"
+              },
+              "X-Cached-Input-Units": {
+                "$ref": "#/components/headers/XCachedInputUnits"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Chat completion (SSE if stream=true)"
+          },
+          "401": {
+            "description": "Auth error"
+          },
+          "402": {
+            "description": "Budget exceeded"
+          },
+          "429": {
+            "description": "Rate limited"
           }
         }
       }
     },
-    "/embeddings": {
+    "/v1/embeddings": {
       "post": {
-        "tags": [
-          "embeddings"
-        ],
         "summary": "Create embeddings",
-        "operationId": "createEmbeddings",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "model",
-                  "input"
-                ],
-                "properties": {
-                  "model": {
-                    "type": "string",
-                    "example": "baai/bge-m3"
-                  },
-                  "input": {
-                    "oneOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      }
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        },
+        "tags": [
+          "core"
+        ],
         "responses": {
           "200": {
-            "description": "Embedding vectors"
+            "description": "OK"
           }
         }
       }
     },
-    "/images/generations": {
+    "/v1/images/generations": {
       "post": {
+        "summary": "Generate an image",
         "tags": [
-          "images"
+          "core"
         ],
-        "summary": "Generate image",
-        "operationId": "createImage",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "model",
-                  "prompt"
-                ],
-                "properties": {
-                  "model": {
-                    "type": "string",
-                    "example": "black-forest-labs/flux-2-klein-9b"
-                  },
-                  "prompt": {
-                    "type": "string"
-                  },
-                  "size": {
-                    "type": "string",
-                    "example": "1024x1024"
-                  },
-                  "n": {
-                    "type": "integer",
-                    "default": 1
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
-            "description": "Image URL(s)"
+            "description": "OK"
           }
         }
       }
     },
-    "/audio/transcriptions": {
+    "/v1/images/edits": {
       "post": {
+        "summary": "Edit an existing image with a text prompt (OpenAI-compatible).",
         "tags": [
-          "audio"
+          "core"
         ],
-        "summary": "Transcribe audio (STT)",
-        "operationId": "createTranscription",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/XAigTag"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "multipart/form-data": {
               "schema": {
                 "type": "object",
-                "required": [
-                  "model",
-                  "file"
-                ],
                 "properties": {
-                  "model": {
-                    "type": "string",
-                    "example": "deepgram/nova-3"
-                  },
-                  "file": {
+                  "image": {
                     "type": "string",
                     "format": "binary"
                   },
-                  "language": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Transcription result"
-          }
-        }
-      }
-    },
-    "/audio/speech": {
-      "post": {
-        "tags": [
-          "audio"
-        ],
-        "summary": "Synthesize speech (TTS)",
-        "operationId": "createSpeech",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "model",
-                  "input"
-                ],
-                "properties": {
-                  "model": {
+                  "mask": {
                     "type": "string",
-                    "example": "deepgram/aura-2-en"
-                  },
-                  "input": {
-                    "type": "string"
-                  },
-                  "voice": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Audio stream (mp3/wav)"
-          }
-        }
-      }
-    },
-    "/videos/generations": {
-      "post": {
-        "tags": [
-          "video"
-        ],
-        "summary": "Generate video (async)",
-        "operationId": "createVideo",
-        "description": "Returns 202 with a job id. Poll GET /jobs/{id} or pass webhook_url.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "model",
-                  "prompt"
-                ],
-                "properties": {
-                  "model": {
-                    "type": "string",
-                    "example": "google/veo-3.1"
+                    "format": "binary"
                   },
                   "prompt": {
                     "type": "string"
                   },
-                  "duration": {
-                    "type": "number"
+                  "model": {
+                    "type": "string"
                   },
-                  "webhook_url": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "size": {
+                    "type": "string"
+                  },
+                  "response_format": {
                     "type": "string",
-                    "format": "uri"
+                    "enum": [
+                      "url",
+                      "b64_json"
+                    ]
                   }
-                }
+                },
+                "required": [
+                  "image",
+                  "prompt"
+                ]
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "image_url": {
+                    "type": "string"
+                  },
+                  "mask_url": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "n": {
+                    "type": "integer"
+                  },
+                  "size": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "image_url",
+                  "prompt"
+                ]
               }
             }
           }
         },
         "responses": {
-          "202": {
-            "description": "Job accepted"
+          "200": {
+            "description": "Edited image (OpenAI shape: { created, data: [{ url | b64_json }] })"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Auth error"
+          },
+          "402": {
+            "description": "Budget exceeded"
+          },
+          "413": {
+            "description": "Image exceeds 25 MB"
+          },
+          "429": {
+            "description": "Rate limited"
           }
         }
       }
     },
-    "/moderations": {
+    "/v1/audio/transcriptions": {
       "post": {
+        "summary": "Transcribe audio (sync, or async via async:true / webhook_url)",
+        "description": "Speech-to-text. Synchronous by default. Pass async:true (then poll GET /v1/jobs/{id}) or a webhook_url to run as a batch job — best for long recordings (Deepgram Nova 3 / Flux). For live transcription, use the WebSocket endpoint GET /v1/realtime.",
         "tags": [
-          "moderation"
+          "core"
         ],
+        "responses": {
+          "200": {
+            "description": "OK (sync transcript)"
+          },
+          "202": {
+            "description": "Accepted — async job created; poll /v1/jobs/{id}"
+          }
+        }
+      }
+    },
+    "/v1/realtime": {
+      "get": {
+        "summary": "Realtime streaming speech-to-text (WebSocket)",
+        "description": "WebSocket endpoint. Connect to wss://api.aigateway.sh/v1/realtime?model=deepgram/nova-3&encoding=linear16&sample_rate=16000&interim_results=true with ?api_key= (browsers) or Authorization: Bearer (servers). Stream raw audio frames; receive {type:\"Results\",...} then a final {type:\"Metadata\"}. End with {\"type\":\"CloseStream\"}. Billed per audio-minute. Models: deepgram/nova-3, deepgram/flux.",
+        "tags": [
+          "core"
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols — WebSocket established"
+          },
+          "426": {
+            "description": "Upgrade Required — connect with wss://"
+          }
+        }
+      }
+    },
+    "/v1/audio/speech": {
+      "post": {
+        "summary": "Synthesize speech",
+        "tags": [
+          "core"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/moderations": {
+      "post": {
         "summary": "Moderate content",
-        "operationId": "createModeration",
+        "tags": [
+          "core"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "summary": "List models",
+        "description": "List models with pricing, context window, capabilities, and tier. Filter with ?modality= and ?provider=.",
+        "tags": [
+          "catalog"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/models/{id}": {
+      "get": {
+        "summary": "Get a model (with invocation schema)",
+        "description": "Returns the model's metadata plus a `schema` block: the exact endpoint, a request example, a non-streaming and streaming response example, model-specific quirks (e.g. reasoning output, rejects temperature, max_completion_tokens), and runnable curl/Python/TypeScript snippets. This is the canonical \"how do I call this model\" call for agents.",
+        "tags": [
+          "catalog"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "openai/gpt-5.4"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/models/{id}/schema": {
+      "get": {
+        "summary": "Get just a model's invocation schema",
+        "description": "The `schema` block alone (endpoint, request/response/streaming examples, quirks, SDK snippets) for the given model id.",
+        "tags": [
+          "catalog"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "anthropic/claude-opus-4.7"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/capabilities": {
+      "get": {
+        "summary": "List the capability vocabulary",
+        "description": "The fixed set of capability ids used across the catalog, each with a description and the endpoint it maps to. Agents reason over these instead of guessing what a free-text tag means.",
+        "tags": [
+          "catalog"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/health/providers": {
+      "get": {
+        "summary": "Provider health",
+        "tags": [
+          "catalog"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/sub-accounts": {
+      "post": {
+        "summary": "Create a sub-account (per-customer scoped key)",
+        "tags": [
+          "primitives"
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": [
-                  "input"
-                ],
                 "properties": {
-                  "model": {
-                    "type": "string",
-                    "example": "meta/llama-guard-3-8b"
+                  "name": {
+                    "type": "string"
                   },
-                  "input": {
-                    "oneOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      }
-                    ]
+                  "external_ref": {
+                    "type": "string"
+                  },
+                  "spend_cap_cents": {
+                    "type": "integer"
+                  },
+                  "rate_limit_rpm": {
+                    "type": "integer"
+                  },
+                  "default_tag": {
+                    "type": "string"
                   }
-                }
+                },
+                "required": [
+                  "name"
+                ]
               }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "Per-category safety flags"
+          "201": {
+            "description": "Sub-account + plaintext key (shown once)."
           }
         }
-      }
-    },
-    "/models": {
+      },
       "get": {
+        "summary": "List sub-accounts",
         "tags": [
-          "models"
-        ],
-        "summary": "List models",
-        "operationId": "listModels",
-        "parameters": [
-          {
-            "name": "modality",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "text",
-                "image",
-                "audio-stt",
-                "audio-tts",
-                "video",
-                "embedding",
-                "rerank",
-                "moderation"
-              ]
-            }
-          },
-          {
-            "name": "provider",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "example": "anthropic"
-            }
-          }
+          "primitives"
         ],
         "responses": {
           "200": {
-            "description": "OpenAI-shaped model list with pricing + capabilities"
+            "description": "OK"
           }
         }
       }
     },
-    "/jobs/{id}": {
+    "/v1/sub-accounts/{id}": {
       "get": {
+        "summary": "Get sub-account",
         "tags": [
-          "video"
+          "primitives"
         ],
-        "summary": "Get async job",
-        "operationId": "getJob",
         "parameters": [
           {
             "name": "id",
@@ -435,107 +840,981 @@
         ],
         "responses": {
           "200": {
-            "description": "Job status + result"
+            "description": "OK"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete sub-account",
+        "tags": [
+          "primitives"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
           }
         }
       }
-    }
-  },
-  "components": {
-    "securitySchemes": {
-      "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "sk-aig-..."
-      }
     },
-    "schemas": {
-      "ChatCompletionRequest": {
-        "type": "object",
-        "required": [
-          "model",
-          "messages"
+    "/v1/replays": {
+      "post": {
+        "summary": "Replay or shadow a past request on a new model",
+        "tags": [
+          "primitives"
         ],
-        "properties": {
-          "model": {
-            "type": "string",
-            "description": "Provider-qualified slug. Featured: anthropic/claude-opus-4.7, openai/gpt-5.4, google/gemini-3.1-pro, moonshot/kimi-k2.6, anthropic/claude-sonnet-4.6, openai/gpt-5.4-mini, xai/grok-4, google/gemini-3-flash, anthropic/claude-haiku-4.5, openai/o4-mini. Fetch full list from /models.",
-            "example": "anthropic/claude-opus-4.7"
-          },
-          "messages": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "role",
-                "content"
-              ],
-              "properties": {
-                "role": {
-                  "type": "string",
-                  "enum": [
-                    "system",
-                    "user",
-                    "assistant",
-                    "tool"
-                  ]
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "source_request_id": {
+                    "type": "string"
+                  },
+                  "target_model": {
+                    "type": "string"
+                  },
+                  "shadow": {
+                    "type": "boolean",
+                    "default": false
+                  }
                 },
-                "content": {
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "array"
-                    }
-                  ]
+                "required": [
+                  "source_request_id",
+                  "target_model"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Replay record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Replay"
                 }
               }
             }
-          },
-          "stream": {
-            "type": "boolean",
-            "default": false
-          },
-          "temperature": {
-            "type": "number"
-          },
-          "max_tokens": {
-            "type": "integer"
-          },
-          "tools": {
-            "type": "array"
-          },
-          "tool_choice": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "object"
+          }
+        }
+      },
+      "get": {
+        "summary": "List replays",
+        "tags": [
+          "primitives"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/replays/{id}": {
+      "get": {
+        "summary": "Get replay",
+        "tags": [
+          "primitives"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/evals": {
+      "post": {
+        "summary": "Run an eval across candidate models",
+        "tags": [
+          "primitives"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "metric": {
+                    "type": "string",
+                    "enum": [
+                      "quality",
+                      "cost",
+                      "speed"
+                    ]
+                  },
+                  "candidate_models": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "dataset": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "candidate_models",
+                  "dataset"
+                ]
               }
-            ]
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Completed eval run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRun"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List eval runs",
+        "tags": [
+          "primitives"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/evals/{id}": {
+      "get": {
+        "summary": "Get eval run",
+        "tags": [
+          "primitives"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/usage/by-tag": {
+      "get": {
+        "summary": "Monthly cost grouped by tag",
+        "tags": [
+          "primitives"
+        ],
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "2026-04"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/usage/by-sub-account": {
+      "get": {
+        "summary": "Monthly cost grouped by sub-account",
+        "tags": [
+          "primitives"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/videos/generations": {
+      "post": {
+        "summary": "Generate video (async). Returns a job record — poll /v1/jobs/{id} or provide webhook_url.",
+        "tags": [
+          "async"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "type": "number",
+                    "description": "seconds"
+                  },
+                  "aspect_ratio": {
+                    "type": "string"
+                  },
+                  "resolution": {
+                    "type": "string"
+                  },
+                  "image_url": {
+                    "type": "string",
+                    "description": "Seed image for image-to-video."
+                  },
+                  "webhook_url": {
+                    "type": "string",
+                    "description": "HTTPS URL to POST on completion."
+                  }
+                },
+                "required": [
+                  "prompt"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted"
+          }
+        }
+      }
+    },
+    "/v1/audio/music": {
+      "post": {
+        "summary": "Generate music (async). Returns a job record — poll /v1/jobs/{id} or provide webhook_url.",
+        "tags": [
+          "async"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "Text description of the music to generate."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Model slug, or omit / \"auto/music\" to auto-route."
+                  },
+                  "duration": {
+                    "type": "number",
+                    "description": "Target length in seconds, honored where the model supports it (e.g. stable-audio, ace-step, mmaudio, elevenlabs). Clamped to each model's range; some models (e.g. minimax music) choose their own length."
+                  },
+                  "lyrics": {
+                    "type": "string",
+                    "description": "Optional lyrics. Omit (or set is_instrumental) for an instrumental track."
+                  },
+                  "is_instrumental": {
+                    "type": "boolean",
+                    "description": "Generate an instrumental track with no vocals."
+                  },
+                  "lyrics_optimizer": {
+                    "type": "boolean",
+                    "description": "Let the model refine supplied lyrics. Defaults to true."
+                  },
+                  "webhook_url": {
+                    "type": "string",
+                    "description": "HTTPS URL to POST on completion."
+                  }
+                },
+                "required": [
+                  "prompt"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted"
+          }
+        }
+      }
+    },
+    "/v1/3d/generations": {
+      "post": {
+        "summary": "Generate a 3D asset (async). Returns a job record.",
+        "tags": [
+          "async"
+        ],
+        "responses": {
+          "202": {
+            "description": "Job accepted"
+          }
+        }
+      }
+    },
+    "/v1/translations": {
+      "post": {
+        "summary": "Translate text between languages.",
+        "tags": [
+          "utility"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/classifications": {
+      "post": {
+        "summary": "Classify text into labels with scores.",
+        "tags": [
+          "utility"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/detections": {
+      "post": {
+        "summary": "Detect objects + bounding boxes in an image.",
+        "tags": [
+          "utility"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/ocr": {
+      "post": {
+        "summary": "Extract text from an image.",
+        "tags": [
+          "utility"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/rerank": {
+      "post": {
+        "summary": "Score documents against a query for RAG re-ranking.",
+        "tags": [
+          "utility"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}": {
+      "get": {
+        "summary": "Poll an async job (video, music, 3D).",
+        "tags": [
+          "async"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job snapshot"
           },
-          "response_format": {
-            "type": "object"
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Cancel a queued async job.",
+        "tags": [
+          "async"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelled or terminal"
+          }
+        }
+      }
+    },
+    "/v1/files/jobs/{jobId}/{filename}": {
+      "get": {
+        "summary": "Download the binary result of a completed async job.",
+        "tags": [
+          "async"
+        ],
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/v1/files": {
+      "post": {
+        "summary": "Upload a file (multipart). Used as input to /v1/batches and future fine-tune / assistants primitives.",
+        "tags": [
+          "files"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "enum": [
+                      "batch",
+                      "batch_output",
+                      "fine-tune",
+                      "assistants"
+                    ],
+                    "default": "batch"
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "File uploaded."
+          },
+          "400": {
+            "description": "Invalid request."
+          }
+        }
+      },
+      "get": {
+        "summary": "List uploaded files.",
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "purpose",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of files."
+          }
+        }
+      }
+    },
+    "/v1/files/{id}": {
+      "get": {
+        "summary": "Get file metadata.",
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File record."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a file.",
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
+    },
+    "/v1/files/{id}/content": {
+      "get": {
+        "summary": "Download file content.",
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
+    },
+    "/v1/batches": {
+      "post": {
+        "summary": "Create a batch of requests (OpenAI-compatible). 50% discount, 24h SLA.",
+        "description": "Accepts a JSONL file of requests (one per line in {custom_id, method, url, body} shape) and dispatches each through the gateway. Input file must be uploaded first via /v1/files with purpose=\"batch\". Supported endpoints: /v1/chat/completions, /v1/embeddings. MVP cap: 100 requests per batch.",
+        "tags": [
+          "batches"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "input_file_id": {
+                    "type": "string"
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "enum": [
+                      "/v1/chat/completions",
+                      "/v1/embeddings"
+                    ],
+                    "default": "/v1/chat/completions"
+                  },
+                  "completion_window": {
+                    "type": "string",
+                    "enum": [
+                      "24h"
+                    ],
+                    "default": "24h"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "input_file_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Batch created."
+          },
+          "400": {
+            "description": "Invalid request."
+          }
+        }
+      },
+      "get": {
+        "summary": "List batches.",
+        "tags": [
+          "batches"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of batches."
+          }
+        }
+      }
+    },
+    "/v1/batches/{id}": {
+      "get": {
+        "summary": "Get batch status.",
+        "tags": [
+          "batches"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Batch record."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
+    },
+    "/v1/batches/{id}/cancel": {
+      "post": {
+        "summary": "Cancel a batch. Completed lines remain in output_file_id.",
+        "tags": [
+          "batches"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancelling."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
+    },
+    "/mcp": {
+      "post": {
+        "summary": "MCP (Model Context Protocol) JSON-RPC endpoint — Streamable HTTP transport.",
+        "description": "Full MCP server exposing every gateway capability as a tool: chat, embed, generate_image, transcribe, speak, translate, classify, moderate, rerank, ocr, detect_objects, generate_video, generate_music, generate_3d, get_job, cancel_job, list_models, search_models. Authenticate with the same bearer key as the HTTP API.",
+        "tags": [
+          "mcp"
+        ],
+        "responses": {
+          "200": {
+            "description": "JSON-RPC response"
+          }
+        }
+      }
+    },
+    "/mcp/sse": {
+      "get": {
+        "summary": "MCP legacy SSE transport — opens an event stream; post messages to /mcp/message.",
+        "tags": [
+          "mcp"
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream"
+          }
+        }
+      }
+    },
+    "/mcp/inspect": {
+      "get": {
+        "summary": "Live MCP inspector HTML — paste a key and try every tool in the browser.",
+        "tags": [
+          "mcp"
+        ],
+        "responses": {
+          "200": {
+            "description": "HTML"
+          }
+        }
+      }
+    },
+    "/v1/balance": {
+      "get": {
+        "summary": "Wallet balance",
+        "description": "Current credit balance and recent spend for the authenticated key.",
+        "tags": [
+          "account"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/cache": {
+      "delete": {
+        "summary": "Clear the response cache",
+        "description": "Flush this account's cached responses (exact + semantic).",
+        "tags": [
+          "account"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/webhook-secret": {
+      "get": {
+        "summary": "Return the HMAC secret for this API key used to sign async job webhooks.",
+        "tags": [
+          "webhooks"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/webhook-secret/rotate": {
+      "post": {
+        "summary": "Rotate the webhook HMAC secret. Old secret is invalidated immediately.",
+        "tags": [
+          "webhooks"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/v1/files/jobs/{jobId}/{filename}/signed": {
+      "get": {
+        "summary": "Mint a signed URL for a job result file that skips gateway auth.",
+        "tags": [
+          "async"
+        ],
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expires_in",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 604800
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "URL + expiry"
+          }
+        }
+      }
+    },
+    "/v1/files/jobs/{jobId}/{filename}/public": {
+      "get": {
+        "summary": "Public fetch with a signed token — no Authorization header required.",
+        "tags": [
+          "async"
+        ],
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "k",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes"
+          },
+          "400": {
+            "description": "Invalid or expired signature"
           }
         }
       }
     }
-  },
-  "x-featured-models": [
-    "anthropic/claude-opus-4.7",
-    "openai/gpt-5.4",
-    "google/gemini-3.1-pro",
-    "moonshot/kimi-k2.6",
-    "anthropic/claude-sonnet-4.6",
-    "openai/gpt-5.4-mini",
-    "xai/grok-4",
-    "google/gemini-3-flash",
-    "anthropic/claude-haiku-4.5",
-    "openai/o4-mini"
-  ],
-  "x-llms-txt": "https://aigateway.sh/llms.txt",
-  "x-llms-full-txt": "https://aigateway.sh/llms-full.txt",
-  "x-mcp-endpoint": "https://api.aigateway.sh/mcp"
+  }
 }
